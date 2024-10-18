@@ -9,7 +9,9 @@
 const char *mqttTopic = "water_heater";
 
 byte mac[] = {0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xAA};
-IPAddress server(192, 168, 1, 100);
+IPAddress server(192, 168, 1, 105);
+
+void (*functionPointer)(int);
 
 String getDataTopic()
 {
@@ -21,9 +23,19 @@ String getStatusTopic()
     return String(mqttTopic) + "/status";
 }
 
+String getControlTopic()
+{
+    return String(mqttTopic) + "/control";
+}
+
 void callback(char *topic, byte *payload, unsigned int length)
 {
-    // handle message arrived
+    Serial.println("Message arrived [" + String(topic) + "]");
+
+    // Json
+    JsonDocument doc;
+    deserializeJson(doc, payload, length);
+    functionPointer(doc["power1"]);
 }
 
 EthernetClient ethClient;
@@ -45,15 +57,15 @@ boolean reconnect()
         JsonDocument doc;
 
         mqtt_send(getStatusTopic().c_str(), doc);
-        // ... and resubscribe
-        // client.subscribe("inTopic");
+        client.subscribe(getControlTopic().c_str(), 0);
+
+        delay(1000);
     }
     return client.connected();
 }
 
 void mqtt_setup()
 {
-
     Ethernet.init(10);
     Ethernet.begin(mac, 2000);
     delay(1500);
@@ -61,6 +73,8 @@ void mqtt_setup()
 
     Serial.println("Setup completed");
     Serial.println(Ethernet.localIP());
+
+    delay(1500);
 
     client.setClient(ethClient);
     client.setServer(server, 1883);
@@ -87,7 +101,6 @@ void mqtt_loop()
     else
     {
         // Client connected
-
         client.loop();
     }
 }

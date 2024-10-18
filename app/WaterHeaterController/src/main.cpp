@@ -1,14 +1,7 @@
 #include <Arduino.h>
 #include "mqtt.h"
 #include "app.h"
-
-#define THROTTLE(delay)                 \
-  static unsigned long lastPublish = 0; \
-  if (millis() - lastPublish < delay)   \
-  {                                     \
-    return;                             \
-  }                                     \
-  lastPublish = millis();
+#include "config.h"
 
 void setup()
 {
@@ -23,10 +16,12 @@ void publishData()
 {
   THROTTLE(5000);
   mqtt_send(getDataTopic().c_str(), data());
+  Serial.println("Data published");
 }
 
 void loop()
 {
   mqtt_loop();
   publishData();
+  app_loop();
 }
