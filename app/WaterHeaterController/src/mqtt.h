@@ -1,32 +1,47 @@
-#include <SPI.h>
-#include <Ethernet.h>
-#include <EthernetUdp.h>
+#pragma once
+
+#include "ethernet_manager.h"
 #include <PubSubClient.h>
 
 #include <ArduinoJson.h>
 
 // Mqtt topic
 const char *mqttTopic = "water_heater";
-
-byte mac[] = {0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xAA};
 IPAddress server(192, 168, 1, 105);
 
 void (*functionPointer)(int);
+// Uptime
+unsigned long startTime = millis();
 
-String getDataTopic()
+char buffer[110];
+/***************************************************************/
+/*                                                             */
+/*                      MQTT - TOPIC                           */
+/*                                                             */
+/***************************************************************/
+char *getDataTopic()
 {
-    return String(mqttTopic) + "/data";
+    sprintf(buffer, "%s/data", mqttTopic);
+    return buffer;
 }
 
-String getStatusTopic()
+char *getStatusTopic()
 {
-    return String(mqttTopic) + "/status";
+    sprintf(buffer, "%s/status", mqttTopic);
+    return buffer;
 }
 
-String getControlTopic()
+char *getControlTopic()
 {
-    return String(mqttTopic) + "/control";
+    sprintf(buffer, "%s/control", mqttTopic);
+    return buffer;
 }
+
+/***************************************************************/
+/*                                                             */
+/*                    MQTT - Callback                          */
+/*                                                             */
+/***************************************************************/
 
 void callback(char *topic, byte *payload, unsigned int length)
 {
@@ -38,10 +53,13 @@ void callback(char *topic, byte *payload, unsigned int length)
     functionPointer(doc["power1"]);
 }
 
-EthernetClient ethClient;
 PubSubClient client;
 
-long lastReconnectAttempt = 0;
+/***************************************************************/
+/*                                                             */
+/*                        MQTT - Send                          */
+/*                                                             */
+/***************************************************************/
 
 void mqtt_send(String topic, JsonDocument doc)
 {
@@ -50,29 +68,81 @@ void mqtt_send(String topic, JsonDocument doc)
     client.publish(topic.c_str(), buffer, n);
 }
 
+/***************************************************************/
+/*                                                             */
+/*                     MQTT - Reconnect                        */
+/*                                                             */
+/***************************************************************/
+
+enum ResetCause
+{
+    RESET_UNKNOWN,
+    RESET_SYSTEM,
+    RESET_WATCHDOG,
+    RESET_EXTERNAL,
+    RESET_BROWNOUT_33,
+    RESET_BROWNOUT_12,
+    RESET_POWERON
+};
+
+long lastReconnectAttempt = 0;
+
 boolean reconnect()
 {
     if (client.connect("WaterHeaterController"))
     {
-        JsonDocument doc;
 
-        mqtt_send(getStatusTopic().c_str(), doc);
-        client.subscribe(getControlTopic().c_str(), 0);
+        // Find the cause of reset
+        ResetCause reset_cause = RESET_UNKNOWN;
+        uint8_t reset_cause_code = 0;
+        if (MCUSR & (1 << WDRF))
+        {
+            reset_cause = RESET_WATCHDOG;
+            reset_cause_code = 2;
+        }
+        else if (MCUSR & (1 << EXTRF))
+        {
+            reset_cause = RESET_EXTERNAL;
+            reset_cause_code = 3;
+        }
+        else if (MCUSR & (1 << BORF))
+        {
+            reset_cause = RESET_BROWNOUT_33;
+            reset_cause_code = 4;
+        }
+        else if (MCUSR & (1 << PORF))
+        {
+            reset_cause = RESET_POWERON;
+            reset_cause_code = 6;
+        }
+
+        JsonDocument doc;
+        unsigned long elapsedMillis = millis() - startTime;
+
+        // Convert milliseconds to minutes
+        unsigned long elapsedMinutes = elapsedMillis / 60000;
+
+        doc["reset_cause"] = reset_cause;
+        doc["reset_cause_code"] = reset_cause_code;
+        doc["uptime"] = elapsedMinutes;
+
+        mqtt_send(getStatusTopic(), doc);
+        client.subscribe(getControlTopic(), 0);
 
         delay(1000);
     }
     return client.connected();
 }
 
+/***************************************************************/
+/*                                                             */
+/*                         MQTT - Setup                        */
+/*                                                             */
+/***************************************************************/
+
 void mqtt_setup()
 {
-    Ethernet.init(10);
-    Ethernet.begin(mac, 2000);
-    delay(1500);
     lastReconnectAttempt = 0;
-
-    Serial.println("Setup completed");
-    Serial.println(Ethernet.localIP());
 
     delay(1500);
 

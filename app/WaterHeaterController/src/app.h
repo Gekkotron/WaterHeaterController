@@ -1,12 +1,8 @@
 // mosquitto -c /etc/mosquitto/mosquitto.conf
 
 #include <ArduinoJson.h>
-#include <DS18B20.h>
 #include "config.h"
-
-// Sensors
-DS18B20 ds(3);
-int deviceCount = 0;
+#include "temp.h"
 
 // Begin Triacs
 const int triacPin[3] = {9, 12, 13};
@@ -15,14 +11,15 @@ unsigned long triacPower[3] = {0, 0, 0};
 // End Triacs
 
 // half-cycle is 10ms
-float total_timer_count = 0.010 / 0.00001;
-float coeff = total_timer_count / 100;
+float coeff = 2000 / 100;
 
 // Begin Zero-crossing
 volatile unsigned long lastTime = 0; // Last time a zero-crossing was detected
 volatile unsigned long count = 0;    // Time between two zero-crossings (half cycle)
 
-const int zeroCrossingPin = 2; // Pin connected to MOC3041 output (INT0 on Arduino Uno)
+unsigned long lastZeroCrossingTime = 0;
+const unsigned long debounceDelay = 1000; // 1ms debounce time
+const int zeroCrossingPin = 2;            // Pin connected to MOC3041 output (INT0 on Arduino Uno)
 bool zeroCrossingDetected = false;
 float frequency = 0;
 
@@ -32,10 +29,17 @@ unsigned long timerCounter = 0;
 // Interrupt Service Routine (ISR) for zero-crossing detection
 void zeroCrossingISR()
 {
-    zeroCrossingDetected = true;
-    timerCounter = 0; // Reset the counter on zero-crossing
-    count++;          // Increment the zero-crossing counter to calculate the frequency
-    digitalWrite(triacPin[0], HIGH);
+    unsigned long currentTime = micros();
+
+    // Debounce the zero-crossing signal
+    if (currentTime - lastZeroCrossingTime >= debounceDelay)
+    {
+        zeroCrossingDetected = true;
+        timerCounter = 0; // Reset the counter on zero-crossing
+        count++;          // Increment the zero-crossing counter to calculate the frequency
+        digitalWrite(triacPin[0], LOW);
+        lastZeroCrossingTime = currentTime;
+    }
 }
 // End zero-crossing
 
@@ -46,8 +50,10 @@ ISR(TIMER2_COMPA_vect)
         timerCounter++;
         if (timerCounter >= goal)
         {
-            digitalWrite(triacPin[0], LOW); // Fire the TRIAC
-            zeroCrossingDetected = false;   // Reset the zero-crossing flag
+            if (triacPower[0] > 0)
+                digitalWrite(triacPin[0], HIGH); // Fire the TRIAC
+
+            zeroCrossingDetected = false; // Reset the zero-crossing flag
         }
     }
 }
@@ -61,22 +67,18 @@ void setup_timer1()
     TCCR2B = 0;
     TCCR2A |= (1 << WGM21);  // CTC mode (Clear Timer on Compare Match)
     TCCR2B |= (1 << CS21);   // Prescaler = 8 (16MHz / 8 = 2MHz timer frequency)
-    OCR2A = 20;              // Set compare match value for 10µs: 2,000,000 ticks/second * 0.00001 = 20 ticks
+    OCR2A = 10;              // Set compare match value for 5µs: 2,000,000 ticks/second * 0.00001 = 20 ticks
     TIMSK2 |= (1 << OCIE2A); // Enable Timer2 Compare A Match interrupt
 
     // Re-enable interrupts
     sei();
 }
 
-void DS18B20_setup()
+void app_setup()
 {
-    Serial.print("Devices: ");
-    delay(1000);
-    Serial.println(ds.getNumberOfDevices());
-
     // Zero crossing
     pinMode(zeroCrossingPin, INPUT);
-    attachInterrupt(digitalPinToInterrupt(zeroCrossingPin), zeroCrossingISR, CHANGE); // Trigger on falling edge
+    attachInterrupt(digitalPinToInterrupt(zeroCrossingPin), zeroCrossingISR, RISING); // Trigger on falling edge
 
     // Triacs setup
 
@@ -100,12 +102,11 @@ JsonDocument data()
 {
     JsonDocument doc;
 
-    uint8_t index = 0;
-    while (ds.selectNext())
+    float *temp = DS18B20_getData();
+    for (uint8_t i = 0; i < deviceCount; i++)
     {
-        String idx = String(index++);
-        float temperature = ds.getTempC();
-        doc["temp_" + idx] = temperature;
+        String idx = String(i);
+        doc["temp_" + idx] = temp[i];
     }
 
     // Send frequency if it is not zero
@@ -129,7 +130,6 @@ JsonDocument data()
     }
 
     doc["goal"] = goal;
-    doc["total"] = total_timer_count;
 
     return doc;
 }

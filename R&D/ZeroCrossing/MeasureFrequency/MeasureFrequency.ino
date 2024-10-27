@@ -7,7 +7,7 @@ float frequency = 0;
 
 void setup() {
   pinMode(zeroCrossingPin, INPUT);
-  attachInterrupt(digitalPinToInterrupt(zeroCrossingPin), zeroCrossingISR, FALLING);  // Trigger on falling edge
+  attachInterrupt(digitalPinToInterrupt(zeroCrossingPin), zeroCrossingISR, RISING);  // Trigger on falling edge
   
   Serial.begin(115200);
   Serial.println("AC Init: ");
