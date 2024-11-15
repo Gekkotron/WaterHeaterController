@@ -18,9 +18,15 @@ void setup()
 
 void publishData()
 {
-  THROTTLE(5000);
-  mqtt_send(getDataTopic(), data());
+  THROTTLE(2000);
+  mqtt_send(getDataTopic(), createJsonData());
   Serial.println("Data published");
+}
+
+void functionPointer(int power)
+{
+  Serial.println("Power: " + String(power));
+  setTriacPower(0, power);
 }
 
 void loop()

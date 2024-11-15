@@ -5,11 +5,12 @@
 
 #include <ArduinoJson.h>
 
+extern void functionPointer(int power);
+
 // Mqtt topic
 const char *mqttTopic = "water_heater";
-IPAddress server(192, 168, 1, 105);
+IPAddress server(192, 168, 1, 90);
 
-void (*functionPointer)(int);
 // Uptime
 unsigned long startTime = millis();
 
@@ -89,9 +90,9 @@ long lastReconnectAttempt = 0;
 
 boolean reconnect()
 {
+    Serial.println("Attempting MQTT connection...");
     if (client.connect("WaterHeaterController"))
     {
-
         // Find the cause of reset
         ResetCause reset_cause = RESET_UNKNOWN;
         uint8_t reset_cause_code = 0;

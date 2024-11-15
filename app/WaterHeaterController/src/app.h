@@ -1,147 +1,179 @@
-// mosquitto -c /etc/mosquitto/mosquitto.conf
-
 #include <ArduinoJson.h>
 #include "config.h"
 #include "temp.h"
 
-// Begin Triacs
-const int triacPin[3] = {9, 12, 13};
-bool triacState[3] = {false, false, false};
-unsigned long triacPower[3] = {0, 0, 0};
-// End Triacs
+// Configuration
+const int zeroCrossingPin = 2;       // Zero-crossing input pin
+const int triacPin[3] = {4, 12, 13}; // Triac control pins
+volatile bool zeroCrossingDetected = false;
+volatile unsigned long lastZeroCrossingTime = 0;
+volatile unsigned long zeroCrossingInterval = 0;
+volatile unsigned long zeroCrossingCount = 0;
+volatile unsigned int timerCounter = 0; // Timer ticks since last zero-crossing
 
-// half-cycle is 10ms
-float coeff = 2000 / 100;
+float acFrequency = 50.0;                 // Expected AC frequency (adjust if needed)
+const unsigned long debounceDelay = 1000; // Debounce time for zero-crossing detection (in microseconds)
 
-// Begin Zero-crossing
-volatile unsigned long lastTime = 0; // Last time a zero-crossing was detected
-volatile unsigned long count = 0;    // Time between two zero-crossings (half cycle)
+// Phase control
+volatile unsigned long goalTicks[3] = {0, 0, 0};     // Phase delay targets (in timer ticks)
+volatile bool triacFired[3] = {false, false, false}; // Triac firing states
+volatile int powerLevel[3] = {0, 0, 0};              // Power level for each triac (0-100)
 
-unsigned long lastZeroCrossingTime = 0;
-const unsigned long debounceDelay = 1000; // 1ms debounce time
-const int zeroCrossingPin = 2;            // Pin connected to MOC3041 output (INT0 on Arduino Uno)
-bool zeroCrossingDetected = false;
-float frequency = 0;
+// Timer configuration
+const unsigned long timerIntervalMicroseconds = 50; // Timer interval (50 µs for fine-grain control)
+const unsigned long halfCycleTicks = (1e6 / acFrequency) / 2 / timerIntervalMicroseconds;
 
-unsigned long goal = 0;
-unsigned long timerCounter = 0;
+volatile float measuredFrequency = 0.0;
 
-// Interrupt Service Routine (ISR) for zero-crossing detection
+// Zero-Crossing Interrupt
 void zeroCrossingISR()
 {
     unsigned long currentTime = micros();
-
-    // Debounce the zero-crossing signal
     if (currentTime - lastZeroCrossingTime >= debounceDelay)
     {
         zeroCrossingDetected = true;
-        timerCounter = 0; // Reset the counter on zero-crossing
-        count++;          // Increment the zero-crossing counter to calculate the frequency
-        digitalWrite(triacPin[0], LOW);
+        zeroCrossingInterval = currentTime - lastZeroCrossingTime; // Measure interval
         lastZeroCrossingTime = currentTime;
-    }
-}
-// End zero-crossing
 
-ISR(TIMER2_COMPA_vect)
-{
-    if (zeroCrossingDetected)
-    {
-        timerCounter++;
-        if (timerCounter >= goal)
+        zeroCrossingCount++;
+
+        // Update frequency calculation
+        measuredFrequency = 1e6 / (zeroCrossingInterval * 2); // Double zero crossings per cycle
+
+        // Reset timer counters and triac states
+        timerCounter = 0;
+        for (int i = 0; i < 3; i++)
         {
-            if (triacPower[0] > 0)
-                digitalWrite(triacPin[0], HIGH); // Fire the TRIAC
-
-            zeroCrossingDetected = false; // Reset the zero-crossing flag
+            triacFired[i] = false; // Reset firing state
         }
     }
 }
 
-void setup_timer1()
+// Timer Interrupt: Handles triac firing delays
+ISR(TIMER1_COMPA_vect)
 {
-    // Disable interrupts during timer configuration
-    cli();
+    timerCounter++;
 
-    TCCR2A = 0; // Normal operation (no PWM)
-    TCCR2B = 0;
-    TCCR2A |= (1 << WGM21);  // CTC mode (Clear Timer on Compare Match)
-    TCCR2B |= (1 << CS21);   // Prescaler = 8 (16MHz / 8 = 2MHz timer frequency)
-    OCR2A = 10;              // Set compare match value for 5µs: 2,000,000 ticks/second * 0.00001 = 20 ticks
-    TIMSK2 |= (1 << OCIE2A); // Enable Timer2 Compare A Match interrupt
-
-    // Re-enable interrupts
-    sei();
+    for (int i = 0; i < 3; i++)
+    {
+        // Check if it's time to fire the triac
+        if (!triacFired[i] && timerCounter >= goalTicks[i] && goalTicks[i] > 0)
+        {
+            digitalWrite(triacPin[i], HIGH); // Fire the triac
+            delayMicroseconds(100);           // Short pulse to latch triac
+            digitalWrite(triacPin[i], LOW);  // Turn off the pulse
+            triacFired[i] = true;            // Mark as fired
+        }
+    }
 }
 
+// Timer1 Setup
+void setupTimer1()
+{
+    cli();      // Disable interrupts
+    TCCR1A = 0; // Clear Timer1 control registers
+    TCCR1B = 0;
+    TCCR1B |= (1 << WGM12);                      // Configure Timer1 in CTC mode
+    TCCR1B |= (1 << CS11);                       // Set prescaler to 8 (2 MHz timer frequency)
+    OCR1A = (timerIntervalMicroseconds * 2) - 1; // Set compare match value for 50 µs interval
+    TIMSK1 |= (1 << OCIE1A);                     // Enable Timer1 compare interrupt
+    sei();                                       // Enable interrupts
+}
+
+// Power Control Function
+void setTriacPower(int triacIndex, int power)
+{
+    if (power < 0)
+        power = 0;
+    if (power >= 99)
+        power = 100;
+
+    powerLevel[triacIndex] = power;
+    if (power == 0)
+    {
+        goalTicks[triacIndex] = 0; // Turn off the triac
+    }
+    else if (power == 100)
+    {
+        digitalWrite(triacPin[0], HIGH); // Fire the triac immediately
+        goalTicks[triacIndex] = 0;       // Fire at every zero-crossing
+    }
+    else
+    {
+        goalTicks[triacIndex] = (100 - power) * halfCycleTicks / 100;
+    }
+}
+
+// JSON Reporting
+JsonDocument createJsonData()
+{
+    JsonDocument doc;
+
+    float *temperatures = DS18B20_getData();
+    for (uint8_t i = 0; i < deviceCount; i++)
+    {
+        String idx = String(i);
+        doc["temp_" + idx] = temperatures[i];
+    }
+    delete[] temperatures;
+
+    doc["measuredFrequency"] = measuredFrequency;
+    doc["zeroCrossingCount"] = zeroCrossingCount;
+    doc["timerCounter"] = timerCounter;
+
+    zeroCrossingCount = 0; // Reset zero-crossing count
+
+    for (int i = 0; i < 3; i++)
+    {
+        doc["triac_" + String(i) + "_power"] = powerLevel[i];
+        doc["triac_" + String(i) + "_goalTicks"] = goalTicks[i];
+    }
+
+    return doc;
+}
+
+// Arduino Setup
 void app_setup()
 {
-    // Zero crossing
+    Serial.begin(115200);
+
+    // Setup zero-crossing pin
     pinMode(zeroCrossingPin, INPUT);
-    attachInterrupt(digitalPinToInterrupt(zeroCrossingPin), zeroCrossingISR, RISING); // Trigger on falling edge
+    attachInterrupt(digitalPinToInterrupt(zeroCrossingPin), zeroCrossingISR, RISING);
 
-    // Triacs setup
-
+    // Setup triac control pins
     for (int i = 0; i < 3; i++)
     {
         pinMode(triacPin[i], OUTPUT);
         digitalWrite(triacPin[i], LOW);
     }
 
-    functionPointer = [](int value)
-    {
-        triacPower[0] = value;
-        goal = (100 - triacPower[0]) * coeff;
-    };
+    // Initialize Timer1
+    setupTimer1();
 
-    setup_timer1();
+    // Set initial power levels
+    setTriacPower(0, 0); // Example: 50% power on TRIAC 0
+    // setTriacPower(1, 75); // Example: 75% power on TRIAC 1
+    // setTriacPower(2, 25); // Example: 25% power on TRIAC 2
 }
 
-// Data
-JsonDocument data()
-{
-    JsonDocument doc;
-
-    float *temp = DS18B20_getData();
-    for (uint8_t i = 0; i < deviceCount; i++)
-    {
-        String idx = String(i);
-        doc["temp_" + idx] = temp[i];
-    }
-
-    // Send frequency if it is not zero
-    if (count > 0)
-    {
-        // Frequency = 1 / (full cycle time in seconds)
-        long diff = micros() - lastTime;
-        frequency = 1000000.0 / (diff * 2 / count);
-        doc["frequency"] = frequency;
-        doc["count"] = count;
-        count = 0;
-        lastTime = micros();
-    }
-
-    // Send triac state
-    for (int i = 0; i < 3; i++)
-    {
-        String index = String(i);
-        doc["tria_state_" + index] = triacState[i] ? 1 : 0;
-        doc["tria_power_" + index] = triacPower[i];
-    }
-
-    doc["goal"] = goal;
-
-    return doc;
-}
-
+uint8_t power = 0;
+bool flow = true;
 void app_loop()
 {
     /*
-    THROTTLE(500);
-    triacPower[0]++;
-    if (triacPower[0] > 100)
+    if (power >= 100)
     {
-        triacPower[0] = 0;
+        flow = false;
     }
+    else if (power <= 0)
+    {
+        flow = true;
+    }
+
+    power = power + (5 * (flow ? 1 : -1));
+
+    setTriacPower(0, power);
+    delay(2000);
     */
 }
