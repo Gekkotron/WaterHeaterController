@@ -9,7 +9,7 @@
 // Power callback
 extern void updatePower(uint8_t channel, uint8_t power);
 
-boolean reconnect();
+bool reconnect();
 
 // Mqtt topic
 const char *mqttTopic = "water_heater";
@@ -96,62 +96,23 @@ void publishData()
 /*                                                             */
 /***************************************************************/
 
-enum ResetCause
-{
-    RESET_UNKNOWN,
-    RESET_SYSTEM,
-    RESET_WATCHDOG,
-    RESET_EXTERNAL,
-    RESET_BROWNOUT_33,
-    RESET_BROWNOUT_12,
-    RESET_POWERON
-};
-
 long lastReconnectAttempt = 0;
 
-boolean reconnect()
+bool reconnect()
 {
     Serial.println("Attempting MQTT connection...");
     if (client.connect("WaterHeaterController"))
     {
-        // Find the cause of reset
-        ResetCause reset_cause = RESET_UNKNOWN;
-        uint8_t reset_cause_code = 0;
-        if (MCUSR & (1 << WDRF))
-        {
-            reset_cause = RESET_WATCHDOG;
-            reset_cause_code = 2;
-        }
-        else if (MCUSR & (1 << EXTRF))
-        {
-            reset_cause = RESET_EXTERNAL;
-            reset_cause_code = 3;
-        }
-        else if (MCUSR & (1 << BORF))
-        {
-            reset_cause = RESET_BROWNOUT_33;
-            reset_cause_code = 4;
-        }
-        else if (MCUSR & (1 << PORF))
-        {
-            reset_cause = RESET_POWERON;
-            reset_cause_code = 6;
-        }
-
-        JsonDocument doc;
+        JsonDocument doc = getResetCause();
         unsigned long elapsedMillis = millis() - startTime;
 
         // Convert milliseconds to minutes
         unsigned long elapsedMinutes = elapsedMillis / 60000;
 
-        doc["reset_cause"] = reset_cause;
-        doc["reset_cause_code"] = reset_cause_code;
         doc["uptime"] = elapsedMinutes;
 
         mqtt_send(getStatusTopic(), doc);
         client.subscribe(getControlTopic(), 0);
-
-        delay(1000);
     }
     return client.connected();
 }

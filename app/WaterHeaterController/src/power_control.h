@@ -62,8 +62,7 @@ void zeroCrossingISR()
     }
 }
 
-// Timer Interrupt: Handles triac firing delays
-ISR(TIMER1_COMPA_vect)
+void timer1Interrupt()
 {
     timerCounter++;
 
@@ -80,9 +79,23 @@ ISR(TIMER1_COMPA_vect)
     }
 }
 
+#ifdef __AVR__
+// Timer Interrupt: Handles triac firing delays
+ISR(TIMER1_COMPA_vect)
+{
+    timer1Interrupt();
+}
+#elif defined(__STM32F1__)
+void __Timer1(void)
+{
+    timer1Interrupt();
+}
+#endif
+
 // Timer1 Setup
 void setupTimer1()
 {
+#ifdef __AVR__
     cli();      // Disable interrupts
     TCCR1A = 0; // Clear Timer1 control registers
     TCCR1B = 0;
@@ -91,6 +104,24 @@ void setupTimer1()
     OCR1A = (timerIntervalMicroseconds * 2) - 1; // Set compare match value for 50 µs interval
     TIMSK1 |= (1 << OCIE1A);                     // Enable Timer1 compare interrupt
     sei();                                       // Enable interrupts
+#elif defined(__STM32F1__)
+    // Disable interruptions
+    __disable irq()
+
+        // Enable Timer1 clock
+        RCC -> APB2ENR |= RCC_APB2ENR_TIM1EN;
+
+    // Configure Timer1
+    TIM1->CR1 = 0;                                   // Clear control register
+    TIM1->CR2 = 0;                                   // Clear control register
+    TIM1->PSC = 0;                                   // Set prescaler to 0
+    TIM1->ARR = (timerIntervalMicroseconds * 2) - 1; // Set auto-reload value for 50 µs interval
+    TIM1->DIER |= TIM_DIER_UIE;                      // Enable update interrupt
+    TIM1->CR1 |= TIM_CR1_CEN;                        // Enable Timer1
+
+    NVIC_EnableIRQ(TIM1_UP_IRQn); // Enable Timer1 interrupt
+    __enable_irq();               // Enable interruptions
+#endif
 }
 
 // Power Control Function
