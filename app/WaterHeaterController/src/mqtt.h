@@ -4,8 +4,12 @@
 #include <PubSubClient.h>
 
 #include <ArduinoJson.h>
+#include "config.h"
 
-extern void functionPointer(int power);
+// Power callback
+extern void updatePower(uint8_t channel, uint8_t power);
+
+boolean reconnect();
 
 // Mqtt topic
 const char *mqttTopic = "water_heater";
@@ -15,6 +19,7 @@ IPAddress server(192, 168, 1, 90);
 unsigned long startTime = millis();
 
 char buffer[110];
+
 /***************************************************************/
 /*                                                             */
 /*                      MQTT - TOPIC                           */
@@ -51,7 +56,10 @@ void callback(char *topic, byte *payload, unsigned int length)
     // Json
     JsonDocument doc;
     deserializeJson(doc, payload, length);
-    functionPointer(doc["power1"]);
+
+    updatePower(0, doc["power0"]);
+    updatePower(1, doc["power1"]);
+    updatePower(2, doc["power2"]);
 }
 
 PubSubClient client;
@@ -66,7 +74,20 @@ void mqtt_send(String topic, JsonDocument doc)
 {
     char buffer[1024];
     size_t n = serializeJson(doc, buffer);
-    client.publish(topic.c_str(), buffer, n);
+    if (!client.publish(topic.c_str(), buffer, n))
+    {
+        Serial.println("Failed to send message");
+    }
+    else
+    {
+        Serial.println("Data published - " + topic);
+    }
+}
+
+void publishData()
+{
+    THROTTLE(2000);
+    mqtt_send(getDataTopic(), createJsonData());
 }
 
 /***************************************************************/
@@ -158,7 +179,7 @@ void mqtt_loop()
     if (!client.connected())
     {
         long now = millis();
-        if (now - lastReconnectAttempt > 5000)
+        if (now - lastReconnectAttempt > 20000)
         {
             Serial.println("Client disconnected");
             lastReconnectAttempt = now;

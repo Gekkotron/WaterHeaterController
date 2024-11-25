@@ -19,7 +19,7 @@ void ethernet_setup()
 }
 void ethernet_loop()
 {
-    if (Ethernet.localIP() == INADDR_NONE)
+    if (Ethernet.localIP() == INADDR_NONE || Ethernet.linkStatus() == Unknown)
     {
         Serial.println("No IP");
         ethernet_setup();

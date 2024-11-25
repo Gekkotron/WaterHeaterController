@@ -1,9 +1,11 @@
 #include <Arduino.h>
-#include "mqtt.h"
-#include "app.h"
 #include "config.h"
 #include "ethernet_manager.h"
 #include "temp.h"
+#include "water_sensor.h"
+#include "power_control.h"
+#include "app.h"
+#include "mqtt.h"
 
 void setup()
 {
@@ -12,27 +14,22 @@ void setup()
 
   ethernet_setup();
   mqtt_setup();
-  app_setup();
-  DS18B20_setup();
+  power_control_setup();
+  water_sensor_setup();
 }
 
-void publishData()
+void updatePower(uint8_t channel, uint8_t power)
 {
-  THROTTLE(2000);
-  mqtt_send(getDataTopic(), createJsonData());
-  Serial.println("Data published");
-}
-
-void functionPointer(int power)
-{
-  Serial.println("Power: " + String(power));
-  setTriacPower(0, power);
+  sprintf(buffer, "Channel %d Power %d", channel, power);
+  Serial.println(buffer);
+  setTriacPower(channel, power);
 }
 
 void loop()
 {
   ethernet_loop();
   mqtt_loop();
+  DS18B20_loop();
   publishData();
-  app_loop();
+  power_control_loop();
 }
