@@ -4,3 +4,5 @@ The Water Heater Controller is a smart IoT device that allows remote control of 
 # First version of pcb with STM32F103RET6 (512Ko)
 <img width="729" alt="image" src="https://github.com/user-attachments/assets/545b6391-a905-43c8-a727-a3f6613ccf0f">
 
+# Second version of pcb with STM32F103RET6 (512Ko)
+<img width="729" alt="image" src="https://github.com/user-attachments/assets/b4365673-652d-4d28-9e6c-0f6465c29402">
