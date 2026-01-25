@@ -1,0 +1,44 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "PlatformIO: Upload OTA (STM32)",
+            "type": "PlatformIO",
+            "task": "Upload",
+            "problemMatcher": [
+                "$platformio"
+            ],
+            "group": "build",
+            "env": {
+                "PLATFORMIO_ENV": "STM32F103RET6_ota"
+            }
+        },
+        {
+            "label": "PlatformIO: Upload OTA (AVR)",
+            "type": "PlatformIO",
+            "task": "Upload",
+            "problemMatcher": [
+                "$platformio"
+            ],
+            "group": "build",
+            "env": {
+                "PLATFORMIO_ENV": "atmega2560_ota"
+            }
+        },
+        {
+            "label": "Check OTA Status",
+            "type": "shell",
+            "command": "curl",
+            "args": [
+                "http://192.168.1.92:8266/status"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        }
+    ]
+}

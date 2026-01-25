@@ -14,13 +14,13 @@ FlowSensor Sensor(type, water_sensor_pin);
 
 void count()
 {
-    Serial.println("Count");
+    logger_println("Count");
     Sensor.count();
 }
 
 void water_sensor_setup()
 {
-    Serial.println("Water Sensor Setup");
+    logger_println("Water Sensor Setup");
     Sensor.begin(count);
 }
 

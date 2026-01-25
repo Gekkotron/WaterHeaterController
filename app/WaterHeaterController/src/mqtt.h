@@ -6,14 +6,16 @@
 #include <ArduinoJson.h>
 #include "config.h"
 
+#include "logger.h"
+
 // Power callback
 extern void updatePower(uint8_t channel, uint8_t power);
 
 bool reconnect();
 
 // Mqtt topic
-const char *mqttTopic = "water_heater";
-IPAddress server(192, 168, 1, 90);
+const char *mqttTopic = "water-heater";
+IPAddress server(192, 168, 1, 91);
 
 // Uptime
 unsigned long startTime = millis();
@@ -51,15 +53,20 @@ char *getControlTopic()
 
 void callback(char *topic, byte *payload, unsigned int length)
 {
-    Serial.println("Message arrived [" + String(topic) + "]");
+    logger_println(String("Message arrived [" + String(topic) + "]").c_str());
 
     // Json
     JsonDocument doc;
     deserializeJson(doc, payload, length);
 
-    updatePower(0, doc["power0"]);
-    updatePower(1, doc["power1"]);
-    updatePower(2, doc["power2"]);
+    if(doc.containsKey("power0"))
+        updatePower(0, doc["power0"]);
+
+    if(doc.containsKey("power1"))
+        updatePower(1, doc["power1"]);
+
+    if(doc.containsKey("power2"))
+        updatePower(2, doc["power2"]);
 }
 
 PubSubClient client;
@@ -76,17 +83,17 @@ void mqtt_send(String topic, JsonDocument doc)
     size_t n = serializeJson(doc, buffer);
     if (!client.publish(topic.c_str(), buffer, n))
     {
-        Serial.println("Failed to send message");
+        logger_println("Failed to send message");
     }
     else
     {
-        Serial.println("Data published - " + topic);
+        logger_println(("Data published - " + topic).c_str());
     }
 }
 
 void publishData()
 {
-    THROTTLE(2000);
+    THROTTLE(4000);
     mqtt_send(getDataTopic(), createJsonData());
 }
 
@@ -100,7 +107,7 @@ long lastReconnectAttempt = 0;
 
 bool reconnect()
 {
-    Serial.println("Attempting MQTT connection...");
+    logger_println("Attempting MQTT connection...");
     if (client.connect("WaterHeaterController"))
     {
         JsonDocument doc = getResetCause();
@@ -142,7 +149,7 @@ void mqtt_loop()
         long now = millis();
         if (now - lastReconnectAttempt > 20000)
         {
-            Serial.println("Client disconnected");
+            logger_println("Client disconnected");
             lastReconnectAttempt = now;
             // Attempt to reconnect
             if (reconnect())

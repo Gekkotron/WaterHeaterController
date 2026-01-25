@@ -4,7 +4,11 @@
 void updateTriacPowerAnimated(int8_t index);
 
 // Configuration
-const int zeroCrossingPin = 2;                                   // Zero-crossing input pin
+#if defined(__STM32F1__) || defined(__STM32__)
+const int zeroCrossingPin = PA15;                                // Zero-crossing input pin
+#elif defined(__AVR__)
+const int zeroCrossingPin = 2;                                   // Zero-crossing input pin (use INT0 or INT1)
+#endif
 const int triacPin[3] = {triac_pin_1, triac_pin_2, triac_pin_3}; // Triac control pins
 volatile bool zeroCrossingDetected = false;
 volatile unsigned long lastZeroCrossingTime = 0;
@@ -22,7 +26,7 @@ volatile int powerLevel[3] = {0, 0, 0};              // Power level for each tri
 // Timer configuration
 const unsigned long timerIntervalMicroseconds = 50; // Timer interval (50 µs for fine-grain control)
 const float acFrequency = 50.0;                     // Expected AC frequency (adjust if needed)
-unsigned long halfCycleTicks;                       // = (1e6 / acFrequency) / 2 / timerIntervalMicroseconds;
+unsigned long halfCycleTicks = 200;                 // = (1e6 / 50Hz) / 2 / 50µs = 200 ticks (updated by ISR)
 
 volatile float measuredFrequency = 0.0;
 
@@ -45,19 +49,27 @@ void zeroCrossingISR()
         measuredFrequency = 1e6 / (zeroCrossingInterval * 2); // Double zero crossings per cycle
 
         // Update half-cycle ticks with measured frequency
-        halfCycleTicks = (1e6 / measuredFrequency) / 2 / timerIntervalMicroseconds;
-
-        // Update goal ticks for phase control
-        for (int i = 0; i < 3; i++)
+        unsigned long newHalfCycleTicks = (1e6 / measuredFrequency) / 2 / timerIntervalMicroseconds;
+        
+        // Only recalculate goalTicks if frequency changed significantly
+        if (abs((long)(newHalfCycleTicks - halfCycleTicks)) > 1)
         {
-            setTriacPower(i, powerLevel[i]);
+            halfCycleTicks = newHalfCycleTicks;
+            for (int i = 0; i < 3; i++)
+            {
+                // Recalculate goalTicks based on stored powerLevel
+                if (powerLevel[i] > 0 && powerLevel[i] < 100)
+                {
+                    goalTicks[i] = (100 - powerLevel[i]) * halfCycleTicks / 100;
+                }
+            }
         }
 
         // Reset timer counters and triac states
         timerCounter = 0;
         for (int i = 0; i < 3; i++)
         {
-            triacFired[i] = false; // Reset firing state
+            triacFired[i] = false; // Reset firing state for all triacs
         }
     }
 }
@@ -68,6 +80,9 @@ void timer1Interrupt()
 
     for (int i = 0; i < 3; i++)
     {
+        if(powerLevel[i] == 100)
+            continue;
+
         // Check if it's time to fire the triac
         if (!triacFired[i] && timerCounter >= goalTicks[i] && goalTicks[i] > 0)
         {
@@ -130,18 +145,19 @@ void setTriacPower(int triacIndex, int power)
     if (power < 0)
         power = 0;
     // Fix positive overflow
-    else if (power >= 99)
+    else if (power > 95)
         power = 100;
 
     powerLevel[triacIndex] = power;
     if (power == 0)
     {
         goalTicks[triacIndex] = 0; // Turn off the triac
+        digitalWrite(triacPin[triacIndex], LOW); // Ensure pin is LOW
     }
-    else if (power == 100)
+    else if (power >= 100)
     {
-        digitalWrite(triacPin[0], HIGH); // Fire the triac immediately
-        goalTicks[triacIndex] = 1;       // Fire at every zero-crossing
+        goalTicks[triacIndex] = 0;
+        digitalWrite(triacPin[triacIndex], HIGH);
     }
     else
     {
@@ -203,10 +219,10 @@ void updateTriacPowerAnimated(int8_t index)
         power[index] = 0;
     }
 
-    Serial.print("Setting TRIAC ");
-    Serial.print(index);
-    Serial.print(" power to ");
-    Serial.println(power[index]);
+    logger_print("Setting TRIAC ");
+    logger_print(String(index).c_str());
+    logger_print(" power to ");
+    logger_println(String(power[index]).c_str());
 
     setTriacPower(index, power[index]);
 }

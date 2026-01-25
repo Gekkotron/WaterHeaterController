@@ -10,11 +10,51 @@
     }                                     \
     lastPublish = millis();
 
+
+// Leds
+#if defined(__STM32F1__) || defined(__STM32__)
+#define LedPin PC5
+#define LedPin2 PC10
+#elif defined(__AVR__)
+#define LedPin 13
+#define LedPin2 12
+#endif
+
+// Ethernet
+#if defined(__STM32F1__) || defined(__STM32__)
+#define ethernet_SPI_CS PD2
+#define ethernet_SPI_MOSI PB5
+#define ethernet_SPI_MISO PB4
+#define ethernet_SPI_SCK PB3
+#elif defined(__AVR__)
+#define ethernet_SPI_CS 53
+#define ethernet_SPI_MOSI 51
+#define ethernet_SPI_MISO 50
+#define ethernet_SPI_SCK 52
+#endif
+
+// Sensors
+#if defined(__STM32F1__) || defined(__STM32__)
+#define water_sensor_pin PB2
+#define dsb_sensor_pin PB1
+#define temp_sensor_adc_pin PB0
+#elif defined(__AVR__)
+// #define zeroCrossingPin 2
 #define water_sensor_pin 3
-#define temp_sensor_pin 4
+#define dsb_sensor_pin 4
+#define temp_sensor_adc_pin A0
+#endif
+
+// Triac pins
+#if defined(__STM32F1__) || defined(__STM32__)
+#define triac_pin_1 PC8
+#define triac_pin_2 PC7
+#define triac_pin_3 PC6
+#elif defined(__AVR__)
 #define triac_pin_1 5
 #define triac_pin_2 6
 #define triac_pin_3 7
+#endif
 
 enum ResetCause
 {
@@ -56,7 +96,7 @@ JsonDocument getResetCause()
         reset_cause = RESET_POWERON;
         reset_cause_code = 6;
     }
-#elif defined(__STM32F1__)
+#elif defined(__STM32F1__) || defined(__STM32__)
     if (RCC->CSR & RCC_CSR_WWDGRSTF)
     {
         reset_cause = RESET_WATCHDOG;

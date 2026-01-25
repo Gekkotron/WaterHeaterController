@@ -1,6 +1,7 @@
 #include <ArduinoJson.h>
 #include "config.h"
 #include "temp.h"
+#include "analog.h"
 
 // JSON Reporting
 JsonDocument createJsonData()
@@ -13,6 +14,10 @@ JsonDocument createJsonData()
         doc["temp_" + idx] = temperatures[i];
     }
 
+    // Fix wrong frequency when no zero-crossings detected
+    if(zeroCrossingCount == 0) {
+        measuredFrequency = 0;
+    }
     doc["measuredFrequency"] = measuredFrequency;
     doc["zeroCrossingCount"] = zeroCrossingCount;
     doc["frequencyError"] = abs(measuredFrequency - acFrequency) > 2 ? 1 : 0;
@@ -23,6 +28,7 @@ JsonDocument createJsonData()
     doc["flow_rate_heure"] = getWaterFlowRateHeure();
     doc["volume"] = getWaterVolume();
     doc["pulse"] = getPulse();
+    doc["adc_result"] = getAdcResult();
 
     zeroCrossingCount = 0; // Reset zero-crossing count
 
