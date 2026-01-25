@@ -45,6 +45,12 @@ char *getControlTopic()
     return buffer;
 }
 
+char *getHeartbeatTopic()
+{
+    sprintf(buffer, "%s/heartbeat", mqttTopic);
+    return buffer;
+}
+
 /***************************************************************/
 /*                                                             */
 /*                    MQTT - Callback                          */
@@ -97,6 +103,23 @@ void publishData()
     mqtt_send(getDataTopic(), createJsonData());
 }
 
+void publishHeartbeat()
+{
+    THROTTLE(1000); // Publish every 1 second
+    
+    JsonDocument doc;
+    
+    #if defined(__STM32F1__) || defined(__STM32__)
+    doc["millis"] = HAL_GetTick();
+    #elif defined(__AVR__)
+    doc["millis"] = millis();
+    #endif
+    
+    doc["uptime_minutes"] = (millis() - startTime) / 60000;
+    
+    mqtt_send(getHeartbeatTopic(), doc);
+}
+
 /***************************************************************/
 /*                                                             */
 /*                     MQTT - Reconnect                        */
@@ -111,13 +134,6 @@ bool reconnect()
     if (client.connect("WaterHeaterController"))
     {
         JsonDocument doc = getResetCause();
-        unsigned long elapsedMillis = millis() - startTime;
-
-        // Convert milliseconds to minutes
-        unsigned long elapsedMinutes = elapsedMillis / 60000;
-
-        doc["uptime"] = elapsedMinutes;
-
         mqtt_send(getStatusTopic(), doc);
         client.subscribe(getControlTopic(), 0);
     }

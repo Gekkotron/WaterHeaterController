@@ -45,6 +45,8 @@ void loop()
   adc_loop();
   DS18B20_loop();
   publishData();
+  publishHeartbeat();
+  checkPowerTimeout();
 
   // led blinking
 #if defined(__STM32F1__) || defined(__STM32__)

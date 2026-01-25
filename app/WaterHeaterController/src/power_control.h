@@ -10,17 +10,41 @@ const int zeroCrossingPin = PA15;                                // Zero-crossin
 const int zeroCrossingPin = 2;                                   // Zero-crossing input pin (use INT0 or INT1)
 #endif
 const int triacPin[3] = {triac_pin_1, triac_pin_2, triac_pin_3}; // Triac control pins
+
+// Fast port manipulation macros for critical timing sections
+#if defined(__AVR__)
+// ATmega2560: Pin 5=PE3, Pin 6=PH3, Pin 7=PH4
+#define TRIAC_0_HIGH() PORTE |= (1 << 3)
+#define TRIAC_0_LOW()  PORTE &= ~(1 << 3)
+#define TRIAC_1_HIGH() PORTH |= (1 << 3)
+#define TRIAC_1_LOW()  PORTH &= ~(1 << 3)
+#define TRIAC_2_HIGH() PORTH |= (1 << 4)
+#define TRIAC_2_LOW()  PORTH &= ~(1 << 4)
+#elif defined(__STM32F1__) || defined(__STM32__)
+// STM32: PC8, PC7, PC6
+#define TRIAC_0_HIGH() GPIOC->BSRR = (1 << 8)
+#define TRIAC_0_LOW()  GPIOC->BSRR = (1 << (8 + 16))
+#define TRIAC_1_HIGH() GPIOC->BSRR = (1 << 7)
+#define TRIAC_1_LOW()  GPIOC->BSRR = (1 << (7 + 16))
+#define TRIAC_2_HIGH() GPIOC->BSRR = (1 << 6)
+#define TRIAC_2_LOW()  GPIOC->BSRR = (1 << (6 + 16))
+#endif
 volatile bool zeroCrossingDetected = false;
 volatile unsigned long lastZeroCrossingTime = 0;
 volatile unsigned long zeroCrossingInterval = 0;
 volatile unsigned long zeroCrossingCount = 0;
 volatile unsigned int timerCounter = 0; // Timer ticks since last zero-crossing
 
+// Power timeout configuration
+const unsigned long powerTimeoutMs = 15UL * 60UL * 1000UL; // 15 minutes in milliseconds
+unsigned long lastPowerCommandTime = 0; // Last time a power command was received
+
 const unsigned long debounceDelay = 2000; // Debounce time for zero-crossing detection (in microseconds)
 
 // Phase control
 volatile unsigned long goalTicks[3] = {0, 0, 0};     // Phase delay targets (in timer ticks)
 volatile bool triacFired[3] = {false, false, false}; // Triac firing states
+volatile bool triacPinState[3] = {false, false, false}; // Track pin HIGH/LOW state
 volatile int powerLevel[3] = {0, 0, 0};              // Power level for each triac (0-100)
 
 // Timer configuration
@@ -48,48 +72,103 @@ void zeroCrossingISR()
         // Update frequency calculation
         measuredFrequency = 1e6 / (zeroCrossingInterval * 2); // Double zero crossings per cycle
 
-        // Update half-cycle ticks with measured frequency
-        unsigned long newHalfCycleTicks = (1e6 / measuredFrequency) / 2 / timerIntervalMicroseconds;
+        // Reset timer counters and triac states FIRST
+        timerCounter = 0;
         
-        // Only recalculate goalTicks if frequency changed significantly
-        if (abs((long)(newHalfCycleTicks - halfCycleTicks)) > 1)
+        // Triac 0
+        triacFired[0] = false;
+        if (powerLevel[0] < 100 && triacPinState[0])
         {
-            halfCycleTicks = newHalfCycleTicks;
-            for (int i = 0; i < 3; i++)
-            {
-                // Recalculate goalTicks based on stored powerLevel
-                if (powerLevel[i] > 0 && powerLevel[i] < 100)
-                {
-                    goalTicks[i] = (100 - powerLevel[i]) * halfCycleTicks / 100;
-                }
-            }
+            TRIAC_0_LOW();
+            triacPinState[0] = false;
+        }
+        
+        // Triac 1
+        triacFired[1] = false;
+        if (powerLevel[1] < 100 && triacPinState[1])
+        {
+            TRIAC_1_LOW();
+            triacPinState[1] = false;
+        }
+        
+        // Triac 2
+        triacFired[2] = false;
+        if (powerLevel[2] < 100 && triacPinState[2])
+        {
+            TRIAC_2_LOW();
+            triacPinState[2] = false;
         }
 
-        // Reset timer counters and triac states
-        timerCounter = 0;
-        for (int i = 0; i < 3; i++)
-        {
-            triacFired[i] = false; // Reset firing state for all triacs
-        }
+        // Update half-cycle ticks with measured frequency
+        // DISABLED: frequency recalculation causing glitches
+        // unsigned long newHalfCycleTicks = (1e6 / measuredFrequency) / 2 / timerIntervalMicroseconds;
+        //
+        // // Only recalculate goalTicks if frequency changed significantly (use larger threshold for stability)
+        // if (abs((long)(newHalfCycleTicks - halfCycleTicks)) > 3)
+        // {
+        //     halfCycleTicks = newHalfCycleTicks;
+        //     for (int i = 0; i < 3; i++)
+        //     {
+        //         // Recalculate goalTicks based on stored powerLevel
+        //         if (powerLevel[i] > 0 && powerLevel[i] < 100)
+        //         {
+        //             goalTicks[i] = (100 - powerLevel[i]) * halfCycleTicks / 100;
+        //         }
+        //     }
+        // }
     }
 }
 
 void timer1Interrupt()
 {
-    timerCounter++;
+    // Read counter once to avoid race condition with zero-crossing ISR
+    unsigned int currentCounter = ++timerCounter;
 
-    for (int i = 0; i < 3; i++)
+    // Triac 0
+    if (powerLevel[0] != 100)
     {
-        if(powerLevel[i] == 100)
-            continue;
-
-        // Check if it's time to fire the triac
-        if (!triacFired[i] && timerCounter >= goalTicks[i] && goalTicks[i] > 0)
+        if (!triacFired[0] && currentCounter >= goalTicks[0] && goalTicks[0] > 0)
         {
-            digitalWrite(triacPin[i], HIGH); // Fire the triac
-            delayMicroseconds(50);           // Short pulse to latch triac
-            digitalWrite(triacPin[i], LOW);  // Turn off the pulse
-            triacFired[i] = true;            // Mark as fired
+            TRIAC_0_HIGH();
+            triacPinState[0] = true;
+            triacFired[0] = true;
+        }
+        else if (triacFired[0] && triacPinState[0])
+        {
+            TRIAC_0_LOW();
+            triacPinState[0] = false;
+        }
+    }
+
+    // Triac 1
+    if (powerLevel[1] != 100)
+    {
+        if (!triacFired[1] && currentCounter >= goalTicks[1] && goalTicks[1] > 0)
+        {
+            TRIAC_1_HIGH();
+            triacPinState[1] = true;
+            triacFired[1] = true;
+        }
+        else if (triacFired[1] && triacPinState[1])
+        {
+            TRIAC_1_LOW();
+            triacPinState[1] = false;
+        }
+    }
+
+    // Triac 2
+    if (powerLevel[2] != 100)
+    {
+        if (!triacFired[2] && currentCounter >= goalTicks[2] && goalTicks[2] > 0)
+        {
+            TRIAC_2_HIGH();
+            triacPinState[2] = true;
+            triacFired[2] = true;
+        }
+        else if (triacFired[2] && triacPinState[2])
+        {
+            TRIAC_2_LOW();
+            triacPinState[2] = false;
         }
     }
 }
@@ -142,6 +221,9 @@ void setupTimer1()
 // Power Control Function
 void setTriacPower(int triacIndex, int power)
 {
+    // Update last command time whenever power is set (except during timeout)
+    lastPowerCommandTime = millis();
+    
     if (power < 0)
         power = 0;
     // Fix positive overflow
@@ -161,6 +243,8 @@ void setTriacPower(int triacIndex, int power)
     }
     else
     {
+        // Ensure pin is LOW before switching to phase control mode
+        digitalWrite(triacPin[triacIndex], LOW);
         goalTicks[triacIndex] = (100 - power) * halfCycleTicks / 100;
     }
 }
@@ -188,6 +272,26 @@ void power_control_setup()
     setTriacPower(2, 0); // Example: 0% power on TRIAC 2
 }
 
+void checkPowerTimeout()
+{
+    // Check if timeout has elapsed
+    if (lastPowerCommandTime > 0 && (millis() - lastPowerCommandTime) > powerTimeoutMs)
+    {
+        // Timeout occurred - set all power to 0
+        for (int i = 0; i < 3; i++)
+        {
+            if (powerLevel[i] != 0)
+            {
+                powerLevel[i] = 0;
+                goalTicks[i] = 0;
+                digitalWrite(triacPin[i], LOW);
+            }
+        }
+        // Reset timestamp to prevent repeated triggering
+        lastPowerCommandTime = 0;
+    }
+}
+
 void power_control_loop()
 {
     /* Animated power update PURPOSE */
@@ -195,6 +299,9 @@ void power_control_loop()
     updateTriacPowerAnimated(1);
     updateTriacPowerAnimated(2);
     delay(1000);
+    
+    // Check for power timeout
+    checkPowerTimeout();
 }
 
 // Animated power update PURPOSE
