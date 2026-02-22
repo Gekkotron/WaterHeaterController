@@ -38,9 +38,12 @@ void ethernet_setup()
 
 void ethernet_loop()
 {
+    // Must be called every loop iteration to renew DHCP lease
+    Ethernet.maintain();
+
     THROTTLE(30000);
-    
-    if (Ethernet.localIP() == INADDR_NONE || Ethernet.linkStatus() == Unknown)
+
+    if (Ethernet.localIP() == INADDR_NONE || Ethernet.linkStatus() == LinkOFF)
     {
         logger_println("No IP");
         ethernet_setup();
