@@ -10,9 +10,17 @@
 #include "analog.h"
 #include "ota_update.h"
 
+#if defined(__AVR__)
+#include <avr/wdt.h>
+#endif
 
 void setup()
 {
+  #if defined(__AVR__)
+  // Disable watchdog first (in case of WDT reset, WDT stays enabled)
+  wdt_disable();
+  #endif
+
   //HAL_Init();
   logger_begin();
 
@@ -27,6 +35,11 @@ void setup()
   digitalWrite(LedPin, HIGH);
 
   delay(2000);
+
+  #if defined(__AVR__)
+  // Enable 8-second watchdog — board resets if loop() hangs
+  wdt_enable(WDTO_8S);
+  #endif
 }
 
 void updatePower(uint8_t channel, uint8_t power)
@@ -39,6 +52,10 @@ void updatePower(uint8_t channel, uint8_t power)
 unsigned long lastBlink = 0;
 void loop()
 {
+  #if defined(__AVR__)
+  wdt_reset(); // Feed the watchdog — must complete full loop within 8s
+  #endif
+
   ota_loop();
   ethernet_loop();
   mqtt_loop();
