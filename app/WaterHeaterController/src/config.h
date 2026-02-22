@@ -109,7 +109,17 @@ JsonDocument getResetCause()
     }
 #endif
 
-    doc["reset_cause"] = reset_cause;
+    const char* reset_cause_str = "unknown";
+    switch (reset_cause) {
+        case RESET_UNKNOWN:      reset_cause_str = "unknown"; break;
+        case RESET_SYSTEM:       reset_cause_str = "system"; break;
+        case RESET_WATCHDOG:     reset_cause_str = "watchdog"; break;
+        case RESET_EXTERNAL:     reset_cause_str = "external"; break;
+        case RESET_BROWNOUT_33:  reset_cause_str = "brownout_33"; break;
+        case RESET_BROWNOUT_12:  reset_cause_str = "brownout_12"; break;
+        case RESET_POWERON:      reset_cause_str = "poweron"; break;
+    }
+    doc["reset_cause"] = reset_cause_str;
     doc["reset_cause_code"] = reset_cause_code;
 
     return doc;
