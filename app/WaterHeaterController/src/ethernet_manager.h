@@ -10,16 +10,20 @@ EthernetClient ethClient;
 
 void ethernet_setup()
 {
-    // Fix proto 1
+    // Fix proto 1 (STM32 SPI pins only — on AVR PB3/4/5 resolve to digital
+    // pins 3/4/5, which are the water sensor, OneWire bus and triac 1)
+#if defined(__STM32F1__) || defined(__STM32__)
     pinMode(PB3, INPUT);
     pinMode(PB4, INPUT);
     pinMode(PB5, INPUT);
+#endif
 
     //pinMode(ethernet_SPI_CS, OUTPUT);
     //digitalWrite(ethernet_SPI_CS, HIGH);
-    
+
     Ethernet.init(ethernet_SPI_CS);
-    if (Ethernet.begin(mac) == 0) {
+    // Cap DHCP at 5s so a missing DHCP server can't block past the 8s watchdog
+    if (Ethernet.begin(mac, 5000) == 0) {
         logger_println("DHCP failed");
     }
 
