@@ -59,6 +59,7 @@ void loop()
   ota_loop();
   ethernet_loop();
   mqtt_loop();
+  comms_watchdog_check(); // force reset if network/W5100 is dead
   adc_loop();
   DS18B20_loop();
   publishData();

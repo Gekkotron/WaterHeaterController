@@ -8,10 +8,21 @@
 
 #include "logger.h"
 
+#if defined(__AVR__)
+#include <avr/wdt.h>
+#endif
+
 // Power callback
 extern void updatePower(uint8_t channel, uint8_t power);
 
 bool reconnect();
+
+// Comms watchdog: if no MQTT message is published successfully within this
+// window, the network stack (W5100) is assumed dead and we force a reset to
+// re-initialise it. Guards against W5100 lockups that the hardware watchdog
+// can't catch (loop() keeps running, so the WDT is fed forever).
+#define NETWORK_TIMEOUT 300000UL // 5 minutes
+unsigned long lastSuccessfulComm = 0;
 
 // Mqtt topic
 const char *mqttTopic = "water-heater";
@@ -94,6 +105,7 @@ void mqtt_send(String topic, JsonDocument doc)
     else
     {
         logger_println(("Data published - " + topic).c_str());
+        lastSuccessfulComm = millis(); // feed the comms watchdog
     }
 }
 
@@ -146,9 +158,35 @@ bool reconnect()
 /*                                                             */
 /***************************************************************/
 
+/***************************************************************/
+/*                                                             */
+/*                   MQTT - Comms watchdog                     */
+/*                                                             */
+/***************************************************************/
+
+void forceReset()
+{
+#if defined(__AVR__)
+    wdt_enable(WDTO_15MS);
+    while (1) {} // let the hardware watchdog reset the MCU
+#elif defined(__STM32F1__) || defined(__STM32__)
+    NVIC_SystemReset();
+#endif
+}
+
+void comms_watchdog_check()
+{
+    if (millis() - lastSuccessfulComm > NETWORK_TIMEOUT)
+    {
+        logger_println("Comms watchdog: no successful publish, resetting");
+        forceReset();
+    }
+}
+
 void mqtt_setup()
 {
     lastReconnectAttempt = 0;
+    lastSuccessfulComm = millis(); // start the comms watchdog window
 
     delay(1500);
 
