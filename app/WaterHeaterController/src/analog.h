@@ -4,7 +4,15 @@
 ADC_HandleTypeDef hadc1;
 #endif
 
+// Number of samples averaged per reading to reduce noise
+#define ADC_SAMPLES 16
+
 volatile uint16_t adc_result = 0;
+
+#if defined(__STM32F1__) || defined(__STM32__)
+volatile uint8_t  adc_sample_count = 0;
+volatile uint32_t adc_accumulator = 0;
+#endif
 
 void adc_setup(void)
 {
@@ -39,6 +47,17 @@ void adc_setup(void)
 #elif defined(__AVR__)
     // Configure ADC for AVR
     pinMode(temp_sensor_adc_pin, INPUT);
+
+    // Use the stable on-chip 1.1V bandgap reference instead of the noisy AVCC.
+    // Signal is < 1.1V, so this also improves resolution (~1.07mV/count).
+    analogReference(INTERNAL1V1);
+
+    // Discard the first reads: the AREF cap needs time to settle after a
+    // reference change, otherwise early samples are invalid.
+    for (uint8_t i = 0; i < 4; i++) {
+        analogRead(temp_sensor_adc_pin);
+        delay(2);
+    }
 #endif
 }
 
@@ -46,10 +65,16 @@ void Start_ADC_Conversion()
 {
 #if defined(__STM32F1__) || defined(__STM32__)
     //THROTTLE(10000);
+    adc_accumulator = 0;
+    adc_sample_count = 0;
     HAL_ADC_Start_IT(&hadc1);
 #elif defined(__AVR__)
-    // For AVR, read analog directly
-    adc_result = analogRead(temp_sensor_adc_pin);
+    // For AVR, read analog directly and average ADC_SAMPLES reads
+    uint32_t sum = 0;
+    for (uint8_t i = 0; i < ADC_SAMPLES; i++) {
+        sum += analogRead(temp_sensor_adc_pin);
+    }
+    adc_result = sum / ADC_SAMPLES;
 #endif
 }
 
@@ -58,7 +83,20 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if (hadc->Instance == ADC1)
     {
-        adc_result = HAL_ADC_GetValue(hadc);
+        adc_accumulator += HAL_ADC_GetValue(hadc);
+        adc_sample_count++;
+
+        if (adc_sample_count < ADC_SAMPLES)
+        {
+            // Keep the conversion going until ADC_SAMPLES are collected
+            HAL_ADC_Start_IT(hadc);
+        }
+        else
+        {
+            adc_result = adc_accumulator / ADC_SAMPLES;
+            adc_accumulator = 0;
+            adc_sample_count = 0;
+        }
     }
 }
 #endif
@@ -66,6 +104,19 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 uint16_t getAdcResult()
 {
     return adc_result;
+}
+
+uint16_t getAdcVoltageMv()
+{
+    // Convert ADC result to millivolts. Cast to 32-bit to avoid overflow
+    // (raw * ref exceeds 16-bit on AVR).
+#if defined(__STM32F1__) || defined(__STM32__)
+    // STM32: reference ~3.3V, 12-bit ADC (4096 levels)
+    return (uint16_t)(((uint32_t)adc_result * 3300) / 4095);
+#elif defined(__AVR__)
+    // AVR: internal 1.1V reference, 10-bit ADC (1024 levels)
+    return (uint16_t)(((uint32_t)adc_result * 1100) / 1023);
+#endif
 }
 
 void adc_loop() {

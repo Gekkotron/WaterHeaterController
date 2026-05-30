@@ -29,6 +29,7 @@ JsonDocument createJsonData()
     doc["volume"] = getWaterVolume();
     doc["pulse"] = getPulse();
     doc["adc_result"] = getAdcResult();
+    doc["adc_result_mv"] = getAdcVoltageMv();
 
     zeroCrossingCount = 0; // Reset zero-crossing count
 
